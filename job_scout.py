@@ -19,12 +19,12 @@ if missing:
     print(f"Error: missing secrets: {', '.join(missing)}")
     sys.exit(1)
 
-# 2. Jooble endpoints (India site first, then global)
-base_urls = [f"https://in.jooble.org/api/{api_key}", f"https://jooble.org/api/{api_key}"]
+# 2. Jooble endpoint (in.jooble.org blocks GitHub servers with 403)
+base_urls = [f"https://jooble.org/api/{api_key}"]
 
 # 3. Searches: broader keywords x nearby locations
-keywords_list = ["procurement", "purchase manager", "sourcing", "supply chain", "SAP MM"]
-locations = ["Punjab", "Ludhiana", "Chandigarh", "Mohali"]
+keywords_list = ["procurement manager", "purchase manager", "strategic sourcing", "supply chain manager", "SAP MM"]
+locations = ["Ludhiana, Punjab, India", "Chandigarh, India", "Punjab, India", "India"]
 search_payloads = [{"keywords": k, "location": l} for k in keywords_list for l in locations]
 
 headers = {"Content-Type": "application/json"}
@@ -40,10 +40,12 @@ for payload in search_payloads:
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=30)
             if response.status_code != 200:
-                print(f"HTTP {response.status_code} for {payload} via {url.split('/api/')[0]}: {response.text[:150]}")
+                print(f"HTTP {response.status_code} for {payload}: {response.text[:100]}")
                 continue
             ok = True
-            jobs = response.json().get("jobs", [])
+            data = response.json()
+            jobs = data.get("jobs", [])
+            print(f"   totalCount={data.get('totalCount')}")
             if jobs:
                 break
         except Exception as e:

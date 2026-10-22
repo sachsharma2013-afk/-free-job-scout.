@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import html
 import smtplib
@@ -6,93 +7,101 @@ import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# 1. Credentials from environment (GitHub Secrets)
-api_key = (os.environ.get("API_KEY") or "").strip()
+# ---------- Credentials (GitHub Secrets) ----------
+app_id = (os.environ.get("ADZUNA_APP_ID") or "").strip()
+app_key = (os.environ.get("ADZUNA_APP_KEY") or "").strip()
 email_address = (os.environ.get("EMAIL_ADDRESS") or "").strip()
-# Gmail App Passwords are shown with spaces; remove them
 email_password = (os.environ.get("EMAIL_PASSWORD") or "").replace(" ", "").strip()
 
-missing = [n for n, v in [("API_KEY", api_key),
-                          ("EMAIL_ADDRESS", email_address),
-                          ("EMAIL_PASSWORD", email_password)] if not v]
+missing = [n for n, v in [("ADZUNA_APP_ID", app_id), ("ADZUNA_APP_KEY", app_key),
+                          ("EMAIL_ADDRESS", email_address), ("EMAIL_PASSWORD", email_password)] if not v]
 if missing:
     print(f"Error: missing secrets: {', '.join(missing)}")
     sys.exit(1)
 
-# 2. Jooble endpoint (in.jooble.org blocks GitHub servers with 403)
-base_urls = [f"https://jooble.org/api/{api_key}"]
+# ---------- Settings (edit these) ----------
+SEARCH_TERMS = ["procurement", "purchase manager", "strategic sourcing",
+                "supply chain", "SAP MM", "category manager", "buyer"]
+LOCATIONS = ["Punjab", "Chandigarh", "Ludhiana", "Mohali"]
+MAX_DAYS_OLD = 7
+RESULTS_PER_PAGE = 50
 
-# 3. Searches: broader keywords x nearby locations
-keywords_list = ["procurement manager", "purchase manager", "strategic sourcing", "supply chain manager", "SAP MM"]
-locations = ["Ludhiana, Punjab, India", "Chandigarh, India", "Punjab, India", "India"]
-search_payloads = [{"keywords": k, "location": l} for k in keywords_list for l in locations]
+MUST_HAVE = re.compile(r"procure|purchas|sourcing|buyer|supply chain|vendor|category|material|sap mm|scm|logistic|contract", re.I)
+MUST_NOT = re.compile(r"sales|marketing|telecall|insurance|loan|recruit|bpo|customer care|business development|driver|teacher", re.I)
 
-headers = {"Content-Type": "application/json"}
-all_job_results = []
-seen_links = set()
+API = "https://api.adzuna.com/v1/api/jobs/in/search/1"
+
+all_jobs = {}
 api_failures = 0
+requests_made = 0
 
-# 4. Fetch jobs
-for payload in search_payloads:
-    jobs = []
-    ok = False
-    for url in base_urls:
+for term in SEARCH_TERMS:
+    for loc in LOCATIONS:
+        params = {
+            "app_id": app_id, "app_key": app_key,
+            "what": term, "where": loc,
+            "results_per_page": RESULTS_PER_PAGE,
+            "max_days_old": MAX_DAYS_OLD,
+            "sort_by": "date",
+            "content-type": "application/json",
+        }
+        requests_made += 1
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
-            if response.status_code != 200:
-                print(f"HTTP {response.status_code} for {payload}: {response.text[:100]}")
+            r = requests.get(API, params=params, timeout=30)
+            if r.status_code != 200:
+                api_failures += 1
+                print(f"HTTP {r.status_code} for '{term}' in {loc}: {r.text[:150]}")
                 continue
-            ok = True
-            data = response.json()
-            jobs = data.get("jobs", [])
-            print(f"   totalCount={data.get('totalCount')}")
-            if jobs:
-                break
+            data = r.json()
+            results = data.get("results", [])
+            kept = 0
+            for j in results:
+                title = j.get("title") or ""
+                if not MUST_HAVE.search(title) or MUST_NOT.search(title):
+                    continue
+                link = j.get("redirect_url")
+                if link and link not in all_jobs:
+                    all_jobs[link] = {
+                        "title": title,
+                        "company": (j.get("company") or {}).get("display_name") or "Unknown",
+                        "location": (j.get("location") or {}).get("display_name") or "",
+                        "posted": (j.get("created") or "")[:10],
+                    }
+                    kept += 1
+            print(f"'{term}' | {loc}: {len(results)} found, {kept} new relevant")
         except Exception as e:
-            print(f"Exception for {payload}: {e}")
-    if not ok:
-        api_failures += 1
-    print(f"{payload['keywords']} | {payload['location']}: {len(jobs)} jobs")
-    for job in jobs:
-        title = html.escape(job.get("title") or "Unknown Title")
-        company = html.escape(job.get("company") or "Unknown Company")
-        location = html.escape(job.get("location") or "")
-        link = job.get("link")
-        if link and link not in seen_links:
-            seen_links.add(link)
-            all_job_results.append(
-                f"<li><b>{title}</b> at {company} ({location})<br>"
-                f"<a href='{html.escape(link, quote=True)}'>View Job &amp; Apply</a></li>"
-            )
+            api_failures += 1
+            print(f"Exception for '{term}' in {loc}: {e}")
 
-# Fail the workflow if every search failed (bad key etc.)
-if api_failures == len(search_payloads):
-    print("All Jooble requests failed. Check API_KEY.")
+if api_failures == requests_made:
+    print("All Adzuna requests failed. Check ADZUNA_APP_ID / ADZUNA_APP_KEY.")
     sys.exit(1)
 
-# 5. Send email
-if not all_job_results:
-    print("No jobs found today.")
+if not all_jobs:
+    print("No relevant jobs found today.")
     sys.exit(0)
 
-print(f"Found {len(all_job_results)} unique jobs. Sending email...")
+print(f"Total unique relevant jobs: {len(all_jobs)}. Sending email...")
 
-items = "".join(all_job_results)
+ordered = sorted(all_jobs.items(), key=lambda kv: kv[1]["posted"], reverse=True)
+items = ""
+for link, j in ordered:
+    items += (f"<li style='margin-bottom:12px'><b>{html.escape(j['title'])}</b><br>"
+              f"{html.escape(j['company'])} &middot; {html.escape(j['location'])} &middot; {j['posted']}<br>"
+              f"<a href='{html.escape(link, quote=True)}'>View &amp; Apply</a></li>")
+
 html_body = f"""
-<html>
-  <body style="font-family: Arial, sans-serif; color: #333;">
-    <h2 style="color: #0056b3;">Your Daily Job Alerts</h2>
-    <p>Latest procurement and supply chain opportunities in Punjab:</p>
-    <ul style="line-height: 1.8;">{items}</ul>
-    <p>Good luck!</p>
-  </body>
-</html>
+<html><body style="font-family: Arial, sans-serif; color: #333;">
+  <h2 style="color:#0056b3;">Daily Job Scout: {len(ordered)} procurement &amp; supply chain jobs</h2>
+  <p>Punjab / Chandigarh region, posted in the last {MAX_DAYS_OLD} days.</p>
+  <ul style="line-height:1.5; padding-left:18px;">{items}</ul>
+</body></html>
 """
 
 msg = MIMEMultipart("alternative")
 msg["From"] = email_address
 msg["To"] = email_address
-msg["Subject"] = "Daily Job Scout: Procurement & Supply Chain Roles in Punjab"
+msg["Subject"] = f"Daily Job Scout: {len(ordered)} procurement jobs"
 msg.attach(MIMEText(html_body, "html"))
 
 try:

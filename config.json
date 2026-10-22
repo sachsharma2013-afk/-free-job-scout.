@@ -1,0 +1,20 @@
+{
+  "country_code": "in",
+  "results_per_query": 30,
+  "minimum_score": 60,
+  "searches": [
+    {"what": "Procurement Manager", "where": "Punjab"},
+    {"what": "Purchase Manager", "where": "Punjab"},
+    {"what": "Sourcing Manager", "where": "Punjab"},
+    {"what": "Procurement Manager", "where": "India"},
+    {"what": "Purchase Manager", "where": "India"},
+    {"what": "Sourcing Manager", "where": "India"},
+    {"what": "Strategic Sourcing", "where": "India"},
+    {"what": "Supply Chain Procurement", "where": "India"}
+  ],
+  "keywords": {
+    "core": ["procurement", "purchasing", "purchase", "sourcing", "strategic sourcing", "vendor management", "supplier management", "supplier development", "supply chain", "category management"],
+    "skills": ["negotiation", "cost reduction", "cost saving", "rfq", "rfp", "tender", "contract management", "purchase order", "po", "inventory", "srm", "sap", "erp", "spend analysis", "should cost", "strategic procurement"],
+    "exclude_title": ["intern", "trainee", "apprentice"]
+  }
+}

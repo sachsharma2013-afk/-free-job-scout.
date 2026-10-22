@@ -19,16 +19,13 @@ if missing:
     print(f"Error: missing secrets: {', '.join(missing)}")
     sys.exit(1)
 
-# 2. Jooble endpoint
-url = f"https://jooble.org/api/{api_key}"
+# 2. Jooble endpoints (India site first, then global)
+base_urls = [f"https://in.jooble.org/api/{api_key}", f"https://jooble.org/api/{api_key}"]
 
-# 3. Searches
-search_payloads = [
-    {"keywords": "procurement SAP S/4HANA", "location": "Punjab"},
-    {"keywords": "purchase manager", "location": "Punjab"},
-    {"keywords": "sourcing supply chain", "location": "Punjab"},
-    {"keywords": "procurement operations", "location": "Punjab"},
-]
+# 3. Searches: broader keywords x nearby locations
+keywords_list = ["procurement", "purchase manager", "sourcing", "supply chain", "SAP MM"]
+locations = ["Punjab", "Ludhiana", "Chandigarh", "Mohali"]
+search_payloads = [{"keywords": k, "location": l} for k in keywords_list for l in locations]
 
 headers = {"Content-Type": "application/json"}
 all_job_results = []
@@ -37,29 +34,34 @@ api_failures = 0
 
 # 4. Fetch jobs
 for payload in search_payloads:
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        if response.status_code != 200:
-            api_failures += 1
-            print(f"Error for '{payload['keywords']}': HTTP {response.status_code} - {response.text[:200]}")
-            continue
-
-        jobs = response.json().get("jobs", [])
-        print(f"'{payload['keywords']}': {len(jobs)} jobs")
-        for job in jobs:
-            title = html.escape(job.get("title") or "Unknown Title")
-            company = html.escape(job.get("company") or "Unknown Company")
-            location = html.escape(job.get("location") or "")
-            link = job.get("link")
-            if link and link not in seen_links:
-                seen_links.add(link)
-                all_job_results.append(
-                    f"<li><b>{title}</b> at {company} ({location})<br>"
-                    f"<a href='{html.escape(link, quote=True)}'>View Job &amp; Apply</a></li>"
-                )
-    except Exception as e:
+    jobs = []
+    ok = False
+    for url in base_urls:
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            if response.status_code != 200:
+                print(f"HTTP {response.status_code} for {payload} via {url.split('/api/')[0]}: {response.text[:150]}")
+                continue
+            ok = True
+            jobs = response.json().get("jobs", [])
+            if jobs:
+                break
+        except Exception as e:
+            print(f"Exception for {payload}: {e}")
+    if not ok:
         api_failures += 1
-        print(f"Exception during API call: {e}")
+    print(f"{payload['keywords']} | {payload['location']}: {len(jobs)} jobs")
+    for job in jobs:
+        title = html.escape(job.get("title") or "Unknown Title")
+        company = html.escape(job.get("company") or "Unknown Company")
+        location = html.escape(job.get("location") or "")
+        link = job.get("link")
+        if link and link not in seen_links:
+            seen_links.add(link)
+            all_job_results.append(
+                f"<li><b>{title}</b> at {company} ({location})<br>"
+                f"<a href='{html.escape(link, quote=True)}'>View Job &amp; Apply</a></li>"
+            )
 
 # Fail the workflow if every search failed (bad key etc.)
 if api_failures == len(search_payloads):
@@ -99,4 +101,3 @@ try:
 except Exception as e:
     print(f"Failed to send email: {e}")
     sys.exit(1)
-
